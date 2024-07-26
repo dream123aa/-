@@ -1,121 +1,260 @@
 <template>
-  <el-container class="chat-container">
-    <el-header class="chat-header">
-      <h1 class="chat-title">在线聊天平台</h1>
-    </el-header>
-    <el-main class="chat-main">
-      <div class="chat-messages" ref="messages">
-        <div v-for="(message, index) in chatStore.messages" :key="index" class="chat-message animate__animated animate__fadeInUp">
-          <span>{{ message }}</span>
+  <div class="chat-container">
+    <div class="chat-sidebar">
+      <el-input v-model="search" placeholder="搜索联系人..."></el-input>
+      <el-menu :default-active="activeContact" class="el-menu-vertical-demo">
+        <el-menu-item v-for="contact in filteredContacts" :key="contact.id" @click="selectContact(contact)">
+          <span>{{ contact.name }}</span>
+          <el-button @click.stop="deleteContact(contact.id)" circle size="mini">×</el-button>
+        </el-menu-item>
+      </el-menu>
+      <div class="add-contact">
+        <el-input v-model="newContactName" placeholder="新好友名称..."></el-input>
+        <el-button @click="addContact" type="primary" circle size="mini">+</el-button>
+      </div>
+    </div>
+    <div class="chat-main">
+      <div class="chat-header">
+        <span>{{ selectedContact ? selectedContact.name : '请选择一个联系人' }}</span>
+      </div>
+      <div class="chat-messages">
+        <div v-for="message in messages" :key="message.id" :class="['message', message.sender === username ? 'sent' : 'received']">
+          <div class="message-info">
+            <span class="message-sender">{{ message.sender }}</span>
+            <span class="message-time">{{ message.time }}</span>
+            <el-button v-if="message.sender === username && message.type !== 'recall'" @click="recallMessage(message.id)" type="text" size="mini">撤回</el-button>
+          </div>
+          <div class="message-text">
+            <span v-if="message.type === 'text'">{{ message.text }}</span>
+            <img v-if="message.type === 'image'" :src="message.content" alt="图片" class="message-image">
+            <a v-if="message.type === 'file'" :href="message.content" target="_blank" class="message-file">{{ message.text }}</a>
+            <span v-if="message.type === 'recall'">消息已被 {{ message.recalledBy }} 撤回</span>
+          </div>
         </div>
       </div>
-    </el-main>
-    <el-footer class="chat-footer">
-      <el-input v-model="newMessage" @keyup.enter="sendMessage" placeholder="输入消息..." class="chat-input">
-        <template #append>
-          <el-button @click="sendMessage" type="primary" icon="el-icon-message"></el-button>
-        </template>
-      </el-input>
-    </el-footer>
-  </el-container>
+      <div class="chat-input">
+        <el-input v-model="newMessage" @keyup.enter="sendMessage" placeholder="输入消息..."></el-input>
+        <input type="file" @change="handleFileUpload" ref="fileInput" style="display: none;">
+        <el-button @click="sendMessage" type="primary">发送</el-button>
+        <el-button @click="triggerFileInput" type="primary">上传文件</el-button>
+        <el-button @click="triggerImageInput" type="primary">上传图片</el-button>
+      </div>
+    </div>
+  </div>
 </template>
 
-<script lang="ts">
-import { defineComponent, ref, onMounted } from 'vue';
-import { useChatStore } from '../store';
+<script setup>
+import { ref, computed, onMounted } from 'vue';
+import { useRoute } from 'vue-router';
 
-export default defineComponent({
-  name: 'ChatView',
-  setup() {
-    const chatStore = useChatStore();
-    const newMessage = ref('');
-    const socket = ref<WebSocket | null>(null);
+const route = useRoute();
+const username = ref(route.query.username || '未知用户');
 
-    // 发送消息函数
-    const sendMessage = () => {
-      if (newMessage.value.trim()) {
-        if (socket.value) {
-          socket.value.send(newMessage.value.trim());
-          chatStore.addMessage(newMessage.value.trim());  // 将消息添加到本地存储中
-          newMessage.value = '';
-        }
-      } else {
-        alert('消息不能为空');
-      }
-    };
+const search = ref('');
+const newMessage = ref('');
+const messages = ref([]);
+const activeContact = ref(null);
+const selectedContact = ref(null);
+const newContactName = ref('');
+const fileInput = ref(null);
+const contacts = ref([
+  { id: 1, name: 'Alice' },
+  { id: 2, name: 'Bob' },
+  { id: 3, name: 'Charlie' },
+]);
 
-    // 初始化WebSocket连接
-    onMounted(() => {
-      socket.value = new WebSocket('ws://localhost:8080');
-      socket.value.onmessage = (event) => {
-        chatStore.addMessage(event.data);
-      };
-    });
+const filteredContacts = computed(() => {
+  return contacts.value.filter(contact => contact.name.toLowerCase().includes(search.value.toLowerCase()));
+});
 
-    return { chatStore, newMessage, sendMessage };
+const selectContact = (contact) => {
+  selectedContact.value = contact;
+  activeContact.value = contact.id.toString();
+  fetchMessages(contact.id);
+};
+
+const sendMessage = () => {
+  if (newMessage.value.trim() === '') return;
+  const timestamp = new Date().toLocaleTimeString();
+  const message = { id: Date.now(), text: newMessage.value, sender: username.value, time: timestamp, type: 'text', contactId: selectedContact.value.id };
+  messages.value.push(message); // 前端测试代码
+  // ws.send(JSON.stringify({ type: 'message', data: message })); // 后端实现时启用
+  newMessage.value = '';
+};
+
+const recallMessage = (messageId) => {
+  const message = messages.value.find(msg => msg.id === messageId);
+  if (message) {
+    message.type = 'recall';
+    message.recalledBy = username.value;
+    // ws.send(JSON.stringify({ type: 'recall', data: { id: messageId, recalledBy: username.value } })); // 后端实现时启用
   }
+};
+
+const addContact = () => {
+  if (newContactName.value.trim() === '') return;
+  const newContact = { id: Date.now(), name: newContactName.value };
+  contacts.value.push(newContact);
+  newContactName.value = '';
+};
+
+const deleteContact = (contactId) => {
+  contacts.value = contacts.value.filter(contact => contact.id !== contactId);
+  if (selectedContact.value && selectedContact.value.id === contactId) {
+    selectedContact.value = null;
+    activeContact.value = null;
+  }
+};
+
+const handleFileUpload = (event) => {
+  const file = event.target.files[0];
+  if (file) {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const timestamp = new Date().toLocaleTimeString();
+      const message = { id: Date.now(), text: file.name, sender: username.value, time: timestamp, type: file.type.startsWith('image') ? 'image' : 'file', content: e.target.result, contactId: selectedContact.value.id };
+      messages.value.push(message); // 前端测试代码
+      // ws.send(JSON.stringify({ type: 'message', data: message })); // 后端实现时启用
+    };
+    reader.readAsDataURL(file);
+  }
+};
+
+const triggerFileInput = () => {
+  fileInput.value.accept = '*/*';
+  fileInput.value.click();
+};
+
+const triggerImageInput = () => {
+  fileInput.value.accept = 'image/*';
+  triggerFileInput();
+};
+
+const fetchMessages = (contactId) => {
+  // 模拟数据
+  messages.value = [
+    { id: 1, text: 'Hello Alice', sender: 'A', time: '10:00 AM', type: 'text', contactId: 1 },
+    { id: 2, text: 'Hi Bob', sender: 'B', time: '10:05 AM', type: 'text', contactId: 2 },
+    { id: 3, text: 'Hello Charlie', sender: 'C', time: '10:10 AM', type: 'text', contactId: 3 },
+  ].filter(message => message.contactId === contactId);
+
+  // 后端实现时启用
+  /*
+  try {
+    const response = await axios.get(`/api/messages/${contactId}`);
+    messages.value = response.data;
+  } catch (error) {
+    console.error("获取消息失败:", error);
+  }
+  */
+};
+
+onMounted(() => {
+  // 获取联系人列表（可选）
+  // fetchContacts();
 });
 </script>
 
 <style scoped>
-@import 'animate.css';
-
-/* 主容器样式 */
 .chat-container {
   display: flex;
-  flex-direction: column;
   height: 100vh;
-  background: linear-gradient(to right, #ff4b2b, #ff416c);
 }
 
-/* 标题样式 */
-.chat-header {
-  text-align: center;
-  background: rgba(0, 0, 0, 0.7);
+.chat-sidebar {
+  width: 250px;
+  background-color: #2c3e50;
+  padding: 20px;
   color: white;
-  padding: 20px;
 }
 
-.chat-title {
-  font-size: 2em;
-  font-weight: bold;
+.add-contact {
+  display: flex;
+  margin-top: 20px;
 }
 
-/* 聊天消息区域样式 */
+.add-contact .el-input {
+  flex: 1;
+  margin-right: 10px;
+}
+
 .chat-main {
-  flex-grow: 1;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background-color: #ecf0f1;
+}
+
+.chat-header {
+  background-color: #3498db;
   padding: 20px;
-  background: rgba(255, 255, 255, 0.8);
-  border-radius: 10px;
-  margin: 10px;
-  overflow-y: auto;
+  color: white;
+  font-size: 1.2em;
 }
 
 .chat-messages {
-  max-height: calc(100vh - 200px);
-  overflow-y: auto;
-  padding: 10px;
-}
-
-.chat-message {
-  padding: 10px;
-  margin-bottom: 10px;
-  background: #ffefef;
-  border-radius: 5px;
-  box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
-}
-
-/* 输入消息区域样式 */
-.chat-footer {
+  flex: 1;
   padding: 20px;
-  background: rgba(0, 0, 0, 0.7);
+  overflow-y: auto;
+}
+
+.message {
+  margin-bottom: 10px;
+  padding: 10px;
+  border-radius: 5px;
+  max-width: 60%;
+  word-wrap: break-word;
+}
+
+.sent {
+  background-color: #e0e0e0;
+  color: black;
+  align-self: flex-end;
+}
+
+.received {
+  background-color: #f0f0f0;
+  color: black;
+  align-self: flex-start;
+}
+
+.message-info {
   display: flex;
   justify-content: space-between;
-  border-radius: 10px;
-  margin: 10px;
+  margin-bottom: 5px;
+}
+
+.message-sender {
+  font-weight: bold;
+}
+
+.message-time {
+  font-size: 0.8em;
+  color: #888;
+}
+
+.message-text {
+  word-wrap: break-word;
+}
+
+.message-image {
+  max-width: 100%;
+  height: auto;
+}
+
+.message-file {
+  color: #3498db;
+  text-decoration: none;
 }
 
 .chat-input {
-  width: calc(100% - 50px);
+  display: flex;
+  padding: 20px;
+  background-color: #ecf0f1;
+}
+
+.chat-input .el-input {
+  flex: 1;
+  margin-right: 10px;
 }
 </style>
